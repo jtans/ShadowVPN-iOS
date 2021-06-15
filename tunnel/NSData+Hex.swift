@@ -13,13 +13,13 @@ extension NSData {
         let data = NSMutableData()
         var temp = ""
         
-        for char in string.characters {
+        for char in string {
             temp += String(char)
-            if temp.lengthOfBytesUsingEncoding(NSUTF8StringEncoding) == 2 {
-                let scanner = NSScanner(string: temp)
+            if temp.lengthOfBytes(using: String.Encoding.utf8) == 2 {
+                let scanner = Scanner(string: temp)
                 var value: CUnsignedInt = 0
-                scanner.scanHexInt(&value)
-                data.appendBytes(&value, length: 1)
+                scanner.scanHexInt32(&value)
+                data.append(&value, length: 1)
                 temp = ""
             }
             

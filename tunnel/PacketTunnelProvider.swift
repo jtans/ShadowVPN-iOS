@@ -10,29 +10,29 @@ import NetworkExtension
 
 class PacketTunnelProvider: NEPacketTunnelProvider {
     var session: NWUDPSession? = nil
-    var conf = [String: AnyObject]()
-    var pendingStartCompletion: (NSError? -> Void)?
+    var conf = [String: Any]()
+    var pendingStartCompletion: ((NSError?) -> Void)?
     var userToken: NSData?
     var chinaDNS: ChinaDNSRunner?
     var routeManager: RouteManager?
 //    var wifi = ChinaDNSRunner.checkWiFiNetwork()
-    var queue: dispatch_queue_t?
+    var queue: DispatchQueue?
     
-    override func startTunnelWithOptions(options: [String : NSObject]?, completionHandler: (NSError?) -> Void) {
-        queue = dispatch_queue_create("shadowvpn.queue", DISPATCH_QUEUE_SERIAL)
+    override func startTunnel(options: [String : NSObject]? = nil, completionHandler: @escaping (Error?) -> Void) {
+        queue = DispatchQueue(label: "shadowvpn.queue")
         conf = (self.protocolConfiguration as! NETunnelProviderProtocol).providerConfiguration!
         self.pendingStartCompletion = completionHandler
-        chinaDNS = ChinaDNSRunner(DNS: conf["dns"] as? String)
+        chinaDNS = ChinaDNSRunner(dns: conf["dns"] as? String)
         if let userTokenString = conf["usertoken"] as? String {
-            if userTokenString.characters.count == 16 {
-                userToken = NSData.fromHexString(userTokenString)
+            if userTokenString.count == 16 {
+                userToken = NSData.fromHexString(string: userTokenString)
             }
         }
         NSLog("setPassword")
-        SVCrypto.setPassword(conf["password"] as! String)
+        SVCrypto.setPassword(conf["password"] as? String)
         self.recreateUDP()
         let keyPath = "defaultPath"
-        let options = NSKeyValueObservingOptions([.New, .Old])
+        let options = NSKeyValueObservingOptions([.new, .old])
         self.addObserver(self, forKeyPath: keyPath, options: options, context: nil)
         NSLog("readPacketsFromTUN")
         self.readPacketsFromTUN()
@@ -43,19 +43,19 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             self.reasserting = true
             self.session = nil
         }
-        dispatch_async(queue!) { () -> Void in
+        queue?.async() { () -> Void in
             if let serverAddress = self.protocolConfiguration.serverAddress {
                 if let port = self.conf["port"] as? String {
                     self.reasserting = false
-                    self.setTunnelNetworkSettings(nil) { (error: NSError?) -> Void in
+                    self.setTunnelNetworkSettings(nil) { (error) in
                         if let error = error {
-                            NSLog("%@", error)
+                            NSLog("%@", error.localizedDescription)
                             // simply kill the extension process since it does no harm and ShadowVPN is expected to be always on
 //                            exit(1)
                         }
-                        dispatch_async(self.queue!) { () -> Void in
+                        self.queue?.async() { () -> Void in
                             NSLog("recreateUDP")
-                            self.session = self.createUDPSessionToEndpoint(NWHostEndpoint(hostname: serverAddress, port: port), fromEndpoint: nil)
+                            self.session = self.createUDPSession(to: NWHostEndpoint(hostname: serverAddress, port: port), from: nil)
                             self.updateNetwork()
                         }
                     }
@@ -67,30 +67,30 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     func updateNetwork() {
         NSLog("updateNetwork")
         let newSettings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: self.protocolConfiguration.serverAddress!)
-        newSettings.IPv4Settings = NEIPv4Settings(addresses: [conf["ip"] as! String], subnetMasks: [conf["subnet"] as! String])
-        routeManager = RouteManager(route: conf["route"] as? String, IPv4Settings: newSettings.IPv4Settings!)
+        newSettings.ipv4Settings = NEIPv4Settings(addresses: [conf["ip"] as! String], subnetMasks: [conf["subnet"] as! String])
+        routeManager = RouteManager(route: conf["route"] as? String, IPv4Settings: newSettings.ipv4Settings!)
         if conf["mtu"] != nil {
-            newSettings.MTU = Int(conf["mtu"] as! String)
+            newSettings.mtu = Int(conf["mtu"] as! String) as NSNumber?
         } else {
-            newSettings.MTU = 1432
+            newSettings.mtu = 1432
         }
         if "chnroutes" == (conf["route"] as? String) {
             NSLog("using ChinaDNS")
-            newSettings.DNSSettings = NEDNSSettings(servers: ["127.0.0.1"])
+            newSettings.dnsSettings = NEDNSSettings(servers: ["127.0.0.1"])
         } else {
             NSLog("using DNS")
-            newSettings.DNSSettings = NEDNSSettings(servers: (conf["dns"] as! String).componentsSeparatedByString(","))
+            newSettings.dnsSettings = NEDNSSettings(servers: (conf["dns"] as! String).components(separatedBy: ","))
         }
         NSLog("setTunnelNetworkSettings")
-        self.setTunnelNetworkSettings(newSettings) { (error: NSError?) -> Void in
+        setTunnelNetworkSettings(newSettings) { (error) in
             self.readPacketsFromUDP()
             NSLog("readPacketsFromUDP")
             if let completionHandler = self.pendingStartCompletion {
                 // send an packet
                 //        self.log("completion")
-                NSLog("%@", String(error))
+                NSLog("%@", error?.localizedDescription ?? "")
                 NSLog("VPN started")
-                completionHandler(error)
+                completionHandler(error as NSError?)
                 if error != nil {
                     // simply kill the extension process since it does no harm and ShadowVPN is expected to be always on
                     exit(1)
@@ -100,13 +100,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
     
     func readPacketsFromTUN() {
-        self.packetFlow.readPacketsWithCompletionHandler {
+        self.packetFlow.readPackets {
             packets, protocols in
             for packet in packets {
 //                NSLog("TUN: %d", packet.length)
-                self.session?.writeDatagram(SVCrypto.encryptWithData(packet, userToken: self.userToken), completionHandler: { (error: NSError?) -> Void in
+                self.session?.writeDatagram(SVCrypto.encrypt(with: packet, userToken: self.userToken as Data?), completionHandler: { (error) in
                     if let error = error {
-                        NSLog("%@", error)
+                        NSLog("%@", error.localizedDescription)
 //                        self.recreateUDP()
 //                        return
                     }
@@ -118,7 +118,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
     
     func readPacketsFromUDP() {
-        session?.setReadHandler({ (newPackets: [NSData]?, error: NSError?) -> Void in
+        session?.setReadHandler({ (newPackets, error) in
             //      self.log("readPacketsFromUDP")
             guard let packets = newPackets else { return }
             var protocols = [NSNumber]()
@@ -126,16 +126,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             for packet in packets {
 //                NSLog("UDP: %d", packet.length)
                 // currently IPv4 only
-                let decrypted = SVCrypto.decryptWithData(packet, userToken: self.userToken)
+                let decrypted = SVCrypto.decrypt(with: packet, userToken: self.userToken as Data?)
 //                NSLog("write to TUN: %d", decrypted.length)
-                decryptedPackets.append(decrypted)
+                decryptedPackets.append(decrypted! as NSData)
                 protocols.append(2)
             }
-            self.packetFlow.writePackets(decryptedPackets, withProtocols: protocols)
-            }, maxDatagrams: NSIntegerMax)
+            self.packetFlow.writePackets(decryptedPackets as [Data], withProtocols: protocols)
+        }, maxDatagrams: NSIntegerMax)
     }
     
-    override func observeValueForKeyPath(keyPath: String?, ofObject object: AnyObject?, change: [String : AnyObject]?, context: UnsafeMutablePointer<Void>) {
+    override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
         if let object = object {
             if object as! NSObject == self {
                 if let keyPath = keyPath {
@@ -155,24 +155,24 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
     
-    override func stopTunnelWithReason(reason: NEProviderStopReason, completionHandler: () -> Void) {
+    override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         // Add code here to start the process of stopping the tunnel
         NSLog("stopTunnelWithReason")
         session?.cancel()
         completionHandler()
-        super.stopTunnelWithReason(reason, completionHandler: completionHandler)
+        super.stopTunnel(with: reason, completionHandler: completionHandler)
         // simply kill the extension process since it does no harm and ShadowVPN is expected to be always on
         exit(0)
     }
     
-    override func handleAppMessage(messageData: NSData, completionHandler: ((NSData?) -> Void)?) {
+    override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)? = nil) {
         // Add code here to handle the message
         if let handler = completionHandler {
             handler(messageData)
         }
     }
     
-    override func sleepWithCompletionHandler(completionHandler: () -> Void) {
+    override func sleep(completionHandler: @escaping () -> Void) {
         // Add code here to get ready to sleep
         completionHandler()
     }

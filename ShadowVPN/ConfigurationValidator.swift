@@ -12,13 +12,13 @@ class ConfigurationValidator: NSObject {
     
     // return nil if there's no error
     class func validateIP(ip: String) -> String? {
-        let parts = ip.componentsSeparatedByString(".")
+        let parts = ip.components(separatedBy: ".")
         if parts.count != 4 {
             return "Invalid IP: " + ip
         }
         for part in parts {
             let n = Int(part)
-            if n == nil || n < 0 || n > 255 {
+            if n == nil || n! < 0 || n! > 255 {
                 return "Invalid IP: " + ip
             }
         }
@@ -35,7 +35,7 @@ class ConfigurationValidator: NSObject {
         if configuration["port"] == nil || configuration["port"]?.length == 0 {
             return "Port must not be empty"
         }
-        let port = Int(configuration["port"] as! String)
+        let port = Int(configuration["port"] as! String)!
         if port < 1 || port > 65535 {
             return "Port is invalid"
         }
@@ -46,7 +46,7 @@ class ConfigurationValidator: NSObject {
         // 4. usertoken must be empty or hex of 8 bytes
         if configuration["usertoken"] != nil {
             if let usertoken = configuration["usertoken"] as? String {
-                if NSData.fromHexString(usertoken).length != 8 && NSData.fromHexString(usertoken).length != 0 {
+                if NSData.fromHexString(string: usertoken).length != 8 && NSData.fromHexString(string: usertoken).length != 0 {
                     return "Usertoken must be HEX of 8 bytes (example: 7e335d67f1dc2c01)"
                 }
             }
@@ -56,7 +56,7 @@ class ConfigurationValidator: NSObject {
             return "IP must not be empty"
         }
         if let ip = configuration["ip"] as? String {
-            let r = validateIP(ip)
+            let r = validateIP(ip: ip)
             if r != nil {
                 return r
             }
@@ -66,7 +66,7 @@ class ConfigurationValidator: NSObject {
             return "Subnet must not be empty"
         }
         if let subnet = configuration["subnet"] as? String {
-            let r = validateIP(subnet)
+            let r = validateIP(ip: subnet)
             if r != nil {
                 return r
             }
@@ -76,12 +76,12 @@ class ConfigurationValidator: NSObject {
             return "DNS must not be empty"
         }
         if let dns = configuration["dns"] as? String {
-            let ips = dns.componentsSeparatedByString(",")
+            let ips = dns.components(separatedBy: ",")
             if ips.count == 0 {
                 return "DNS must not be empty"
             }
             for ip in ips {
-                let r = validateIP(ip)
+                let r = validateIP(ip: ip)
                 if r != nil {
                     return r
                 }
@@ -91,7 +91,7 @@ class ConfigurationValidator: NSObject {
         if configuration["mtu"] == nil || configuration["mtu"]?.length == 0 {
             return "MTU must not be empty"
         }
-        let mtu = Int(configuration["mtu"] as! String)
+        let mtu = Int(configuration["mtu"] as! String)!
         if mtu < 100 || mtu > 9000 {
             return "MTU is invalid"
         }
